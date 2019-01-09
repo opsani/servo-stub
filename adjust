@@ -1,0 +1,127 @@
+#!/usr/bin/env python3
+"""
+Stub for an Optune 'adjust' driver - returns state base on a descriptor or
+previously set state
+(C) 2019, Opsani.
+use:
+adjust --version
+adjust --info
+adjust --query app_name
+adjust app_name <settings-file.json
+
+This script requires a configuration file placed at a fixed location (see
+CFG_FILE constant below).
+
+Example CFG_FILE:
+
+stub:
+    # If set to True, adjust-ed state should be saved and returned on next
+    # query, otherwise, the content of `initial_state` will be returned every
+    # time. State will be saved in `stub.state`
+    # Default: True
+    save_state: True
+
+    initial_state: # this will be returned as is on --query
+        application:
+            components:
+                A:
+                    settings:
+                        cpu:
+                            value: 0.25
+                        mem:
+                            value: 1.0
+"""
+
+import yaml
+
+from adjust import Adjust
+
+VERSION = "0.0.1"
+DESC = "Stub for an Optune 'adjust' driver"
+HAS_CANCEL = False
+
+CFG_FILE = "config.yaml"
+DRIVER_NAME = "stub"
+STATE_FILE = "stub.state"
+
+class Stub(Adjust):
+
+    def _parse_cfg(self):
+        '''
+        load the user-defined application descriptor
+        '''
+
+        try:
+            f = open(CFG_FILE)
+            d = yaml.safe_load(f)
+        except IOError as e:
+            raise Exception(
+                "cannot read configuration from {}:{}".format(CFG_FILE, e.strerror))
+        except yaml.error.YAMLError as e:
+            raise Exception("syntax error in {}: {}".format(CFG_FILE, str(e)))
+        # everything else: raise
+
+        # Valchk
+        assert(DRIVER_NAME in d), \
+            "Missing driver configuration: missing {} section".format(
+                DRIVER_NAME)
+
+        cfg = d[DRIVER_NAME]
+
+        # Check for reuired cfg params
+        assert ("initial_state" in cfg), \
+            "Invalid config: missing initial_state key"
+        assert ("application" in cfg["initial_state"]), \
+            "Invalid config: missing initial_state/application key"
+        assert ("components" in cfg["initial_state"]["application"]), \
+            "Invalid config: missing initial_state/application/components key"
+
+        comps = cfg["initial_state"]["application"]["components"]
+        for c_name, c_data in comps.items():
+            assert ("settings" in c_data), \
+                "Invalid config: Missing settings key for component %s" % c_name
+
+            for s_name, s_data in c_data["settings"].items():
+                assert ("value" in s_data), \
+                    "Invalid config: Missing value for component %s setting %s"\
+                    % (c_name, s_name)
+
+        return cfg
+
+    def _read_state(self):
+        return yaml.safe_load(open(STATE_FILE, 'r'))
+
+    def _save_state(self, state):
+        data = dict(application=state["application"])
+        with open(STATE_FILE, 'wt') as f:
+            yaml.dump(data, f)
+
+    # Overwritten
+    def query(self):
+        cfg = self._parse_cfg()
+
+        save_state = False if cfg.get("save_state") == False else True
+        if save_state:
+            try:
+                state = self._read_state()
+            except:
+                state = cfg["initial_state"]
+        else:
+            state = cfg["initial_state"]
+
+        return state
+
+
+    # Overwritten
+    def adjust(self):
+        cfg = self._parse_cfg()
+
+        save_state = False if cfg.get("save_state") == False else True
+
+        if save_state:
+            self._save_state(self.input_data)
+
+
+if __name__ == '__main__':
+    driver = Stub(VERSION, DESC, HAS_CANCEL)
+    driver.run()
